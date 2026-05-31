@@ -23,6 +23,7 @@
         <h1 class="text-2xl font-bold mb-6 text-gray-900 flex items-center">
             📊 每日投資檢查
             <button onclick="loadData()" class="ml-4 text-sm bg-blue-600 hover:bg-blue-700 text-white py-1 px-3 rounded shadow transition">重新整理</button>
+            <button onclick="openSettings()" class="ml-2 text-sm bg-gray-600 hover:bg-gray-700 text-white py-1 px-3 rounded shadow transition">⚙ 管理標的</button>
         </h1>
         
         <div class="bg-white rounded-lg shadow overflow-hidden overflow-x-auto">
@@ -59,8 +60,76 @@
         </div>
     </div>
 
+    <!-- ======================================================
+         設定 Modal
+    ======================================================= -->
+    <div id="settingsModal" class="fixed inset-0 z-50 hidden items-center justify-center bg-black bg-opacity-50" style="display:none">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl mx-4 flex flex-col" style="max-height:90vh">
+
+            <!-- Modal 標題列 -->
+            <div class="flex items-center justify-between px-6 py-4 border-b border-gray-200 shrink-0">
+                <h2 class="text-lg font-bold text-gray-900">⚙ 管理股票標的</h2>
+                <button onclick="closeSettings()" class="text-gray-400 hover:text-gray-700 text-3xl leading-none pb-1">&times;</button>
+            </div>
+
+            <!-- 標的清單 -->
+            <div class="overflow-y-auto px-6 py-2" style="flex:1">
+                <div id="settingsList" class="divide-y divide-gray-100"></div>
+            </div>
+
+            <!-- 新增 / 編輯表單 -->
+            <div class="px-6 py-4 border-t border-gray-200 bg-gray-50 shrink-0">
+                <p id="formTitle" class="text-sm font-semibold text-gray-700 mb-3">新增股票標的</p>
+                <div class="flex flex-wrap gap-2 items-end">
+                    <div class="flex flex-col gap-1">
+                        <label class="text-xs text-gray-500">代號</label>
+                        <input id="inputSymbol" type="text" placeholder="如 0050 或 ^TWII"
+                            class="border border-gray-300 rounded px-3 py-1.5 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-xs text-gray-500">名稱</label>
+                        <input id="inputName" type="text" placeholder="如 元大台灣50"
+                            class="border border-gray-300 rounded px-3 py-1.5 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+                    </div>
+                    <div class="flex flex-col gap-1">
+                        <label class="text-xs text-gray-500">類別</label>
+                        <select id="inputCategory"
+                            class="border border-gray-300 rounded px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400">
+                            <option value="台灣市值型 ETF">台灣市值型 ETF</option>
+                            <option value="國際市值型 ETF">國際市值型 ETF</option>
+                            <option value="美債券 ETF">美債券 ETF</option>
+                            <option value="短線操作（個股）">短線操作（個股）</option>
+                        </select>
+                    </div>
+                    <button id="submitBtn" onclick="submitTargetForm()"
+                        class="bg-blue-600 hover:bg-blue-700 text-white text-sm py-1.5 px-4 rounded transition">新增</button>
+                    <button id="cancelEditBtn" onclick="cancelEdit()"
+                        class="bg-gray-300 hover:bg-gray-400 text-gray-700 text-sm py-1.5 px-4 rounded transition" style="display:none">取消</button>
+                </div>
+                <p id="formError" class="text-xs text-red-500 mt-2" style="display:none"></p>
+            </div>
+
+            <!-- 底部：備份 + 儲存關閉 -->
+            <div class="flex items-center justify-between px-6 py-4 border-t border-gray-200 shrink-0">
+                <div class="flex gap-2">
+                    <button onclick="exportTargets()"
+                        class="text-sm bg-green-600 hover:bg-green-700 text-white py-1.5 px-4 rounded shadow transition">⬇ 匯出備份</button>
+                    <label class="text-sm bg-yellow-500 hover:bg-yellow-600 text-white py-1.5 px-4 rounded shadow transition cursor-pointer">
+                        ⬆ 匯入備份
+                        <input id="importFileInput" type="file" accept=".json" class="hidden" onchange="importTargets(event)" />
+                    </label>
+                </div>
+                <button onclick="saveSettings()"
+                    class="text-sm bg-blue-600 hover:bg-blue-700 text-white py-2 px-6 rounded shadow transition font-semibold">儲存並關閉</button>
+            </div>
+        </div>
+    </div>
+
     <script>
-        const targets = [
+        // ============================================================
+        // 預設標的 + localStorage 讀寫
+        // ============================================================
+        const DEFAULT_TARGETS = [
             { category: '台灣市值型 ETF', name: '台灣大盤(加權指數)', symbol: '^TWII', apiSymbol: '^TWII', step: 1 },
             { category: '國際市值型 ETF', name: '元大 S&P500', symbol: '00646', apiSymbol: '00646.TW', step: 2 },
             { category: '國際市值型 ETF', name: '富邦歐洲', symbol: '00709', apiSymbol: '00709.TW', step: 2 },
@@ -74,6 +143,24 @@
             { category: '短線操作（個股）', name: '緯創', symbol: '3231', apiSymbol: '3231.TW', step: 4 },
             { category: '短線操作（個股）', name: '茂順', symbol: '9942', apiSymbol: '9942.TW', step: 4 },
         ];
+
+        const STORAGE_KEY = 'stockTargets';
+
+        function loadTargets() {
+            try {
+                const saved = localStorage.getItem(STORAGE_KEY);
+                if (saved) return JSON.parse(saved);
+            } catch (e) {
+                console.warn('讀取 localStorage 失敗，使用預設標的', e);
+            }
+            return JSON.parse(JSON.stringify(DEFAULT_TARGETS));
+        }
+
+        function saveTargets() {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(targets));
+        }
+
+        let targets = loadTargets();
 
         // KD 計算函數 (9日)
         function calculateKD(highs, lows, closes, period = 9) {
@@ -461,6 +548,193 @@
         }
 
         window.onload = loadData;
-    </script>
+
+        // ============================================================
+        // 自動推導輔助
+        // ============================================================
+        const CATEGORY_STEP_MAP = {
+            '台灣市值型 ETF': 1,
+            '國際市值型 ETF': 2,
+            '美債券 ETF': 3,
+            '短線操作（個股）': 4,
+        };
+
+        function deriveStep(category) {
+            return CATEGORY_STEP_MAP[category] || 4;
+        }
+
+        function deriveApiSymbol(symbol) {
+            return symbol.startsWith('^') ? symbol : `${symbol}.TW`;
+        }
+
+        // ============================================================
+        // 設定 Modal 功能
+        // ============================================================
+        let editingSymbol = null;
+
+        function openSettings() {
+            const modal = document.getElementById('settingsModal');
+            modal.style.display = 'flex';
+            renderSettingsList();
+        }
+
+        function closeSettings() {
+            document.getElementById('settingsModal').style.display = 'none';
+            cancelEdit();
+        }
+
+        function renderSettingsList() {
+            const list = document.getElementById('settingsList');
+            if (targets.length === 0) {
+                list.innerHTML = '<p class="text-sm text-gray-400 py-4 text-center">尚無任何標的，請新增</p>';
+                return;
+            }
+            list.innerHTML = targets.map((t, idx) => `
+                <div class="flex items-center justify-between py-2.5 gap-2">
+                    <div class="flex items-center gap-3 min-w-0">
+                        <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full whitespace-nowrap">${escapeHtml(t.category)}</span>
+                        <span class="text-sm font-medium text-gray-800 truncate">${escapeHtml(t.name)}</span>
+                        <span class="text-xs text-gray-400 font-mono">${escapeHtml(t.symbol)}</span>
+                    </div>
+                    <div class="flex gap-1 shrink-0">
+                        <button data-sym="${escapeAttr(t.symbol)}" onclick="editTarget(this.dataset.sym)"
+                            class="text-xs text-blue-500 hover:text-blue-700 px-2 py-1 rounded hover:bg-blue-50 transition">✏ 編輯</button>
+                        <button data-sym="${escapeAttr(t.symbol)}" onclick="deleteTarget(this.dataset.sym)"
+                            class="text-xs text-red-400 hover:text-red-600 px-2 py-1 rounded hover:bg-red-50 transition">🗑 刪除</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function escapeAttr(str) {
+            return String(str).replace(/"/g, '&quot;');
+        }
+
+        function editTarget(symbol) {
+            const target = targets.find(t => t.symbol === symbol);
+            if (!target) return;
+            editingSymbol = symbol;
+            document.getElementById('inputSymbol').value = target.symbol;
+            document.getElementById('inputName').value = target.name;
+            document.getElementById('inputCategory').value = target.category;
+            document.getElementById('formTitle').textContent = `✏ 編輯：${target.name}`;
+            document.getElementById('submitBtn').textContent = '更新';
+            document.getElementById('cancelEditBtn').style.display = '';
+            document.getElementById('formError').style.display = 'none';
+            document.getElementById('inputSymbol').focus();
+        }
+
+        function cancelEdit() {
+            editingSymbol = null;
+            document.getElementById('inputSymbol').value = '';
+            document.getElementById('inputName').value = '';
+            document.getElementById('inputCategory').value = '台灣市值型 ETF';
+            document.getElementById('formTitle').textContent = '新增股票標的';
+            document.getElementById('submitBtn').textContent = '新增';
+            document.getElementById('cancelEditBtn').style.display = 'none';
+            document.getElementById('formError').style.display = 'none';
+        }
+
+        function deleteTarget(symbol) {
+            targets = targets.filter(t => t.symbol !== symbol);
+            renderSettingsList();
+        }
+
+        function submitTargetForm() {
+            const symbol = document.getElementById('inputSymbol').value.trim().toUpperCase();
+            const name = document.getElementById('inputName').value.trim();
+            const category = document.getElementById('inputCategory').value;
+            const errEl = document.getElementById('formError');
+
+            if (!symbol || !name) {
+                errEl.textContent = '請填寫代號與名稱';
+                errEl.style.display = '';
+                return;
+            }
+
+            // 新增模式：檢查重複代號
+            if (!editingSymbol && targets.some(t => t.symbol === symbol)) {
+                errEl.textContent = `代號「${symbol}」已存在，請勿重複新增`;
+                errEl.style.display = '';
+                return;
+            }
+
+            const newTarget = {
+                category,
+                name,
+                symbol,
+                apiSymbol: deriveApiSymbol(symbol),
+                step: deriveStep(category),
+            };
+
+            if (editingSymbol) {
+                const idx = targets.findIndex(t => t.symbol === editingSymbol);
+                if (idx !== -1) targets[idx] = newTarget;
+            } else {
+                targets.push(newTarget);
+            }
+
+            cancelEdit();
+            renderSettingsList();
+            errEl.style.display = 'none';
+        }
+
+        function saveSettings() {
+            saveTargets();
+            closeSettings();
+            loadData();
+        }
+
+        // ============================================================
+        // 匯出 / 匯入 JSON 備份
+        // ============================================================
+        function exportTargets() {
+            const json = JSON.stringify(targets, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'stock-targets.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function importTargets(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            const reader = new FileReader();
+            reader.onload = function (e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    if (!Array.isArray(data) || data.length === 0) throw new Error('格式不正確，需為非空陣列');
+                    for (const item of data) {
+                        if (!item.symbol || !item.name || !item.category) throw new Error('缺少必要欄位（symbol、name、category）');
+                        // 相容舊版匯出（補齊自動推導欄位）
+                        if (!item.step) item.step = deriveStep(item.category);
+                        if (!item.apiSymbol) item.apiSymbol = deriveApiSymbol(item.symbol);
+                    }
+                    targets = data;
+                    saveTargets();
+                    renderSettingsList();
+                    alert(`✅ 匯入成功，共載入 ${data.length} 筆標的`);
+                } catch (err) {
+                    alert(`❌ 匯入失敗：${err.message}`);
+                }
+                // 重設 input，讓同一檔案可再次觸發 onchange
+                event.target.value = '';
+            };
+            reader.readAsText(file);
+        }
 </body>
 </html>
