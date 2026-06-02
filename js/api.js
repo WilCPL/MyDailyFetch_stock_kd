@@ -27,8 +27,8 @@ export async function fetchYahooData(symbol, options = {}) {
     const cacheKey = buildCacheKey(forceFresh);
 
     const endpoints = [
-        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&_=${cacheKey}`,
-        `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&_=${cacheKey}`,
+        `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=6mo&_=${cacheKey}`,
+        `https://query2.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=6mo&_=${cacheKey}`,
     ];
 
     let lastError;
@@ -148,19 +148,22 @@ export async function fetchStockData(item, options = {}) {
         const last = kdData[kdData.length - 1];
         const prev = kdData[kdData.length - 2];
 
-        let kVal = last.k;
+        // 找最後一個有效的 K 値（防範未交易日派發 NaN 的情況）
+        let kVal = NaN;
+        for (let i = kdData.length - 1; i >= 0; i--) {
+            if (Number.isFinite(kdData[i].k)) { kVal = kdData[i].k; break; }
+        }
         let kdCross = '無';
         let remark = '';
 
         if (item.step !== 1) {
-            // KD 狀態判斷：
-            // 1) 優先看最近幾根是否發生交叉
-            // 2) 若沒有新交叉，退回目前 K/D 相對位置，避免長期顯示「無」
+            // KD 狀態判斷：僅看最近 3 根是否發生有意義的交叉事件
+            // 條件：K 穿越 D，且穿越當下 K <= 50（黃金交叉）或 K >= 50（死亡交叉）
+            // 過濾高位/低位小幅震盪造成的假穿越訊號
             const EPS = 1e-6;
-            const lookbackBars = 5;
+            const lookbackBars = 3;
             const startIdx = Math.max(1, kdData.length - lookbackBars);
 
-            let recentSignal = '無';
             for (let i = kdData.length - 1; i >= startIdx; i--) {
                 const p = kdData[i - 1];
                 const c = kdData[i];
@@ -172,25 +175,17 @@ export async function fetchStockData(item, options = {}) {
                 const isAbove = c.k > c.d + EPS;
                 const isBelow = c.k < c.d - EPS;
 
-                if (wasBelowOrEqual && isAbove) {
-                    recentSignal = '黃金交叉';
+                // 黃金交叉：K 向上穿越 D，且穿越時 K 值 <= 50（排除高位震盪）
+                if (wasBelowOrEqual && isAbove && c.k <= 50) {
+                    kdCross = '黃金交叉';
                     break;
                 }
-                if (wasAboveOrEqual && isBelow) {
-                    recentSignal = '死亡交叉';
+                // 死亡交叉：K 向下穿越 D，且穿越時 K 值 >= 50（排除低位震盪）
+                if (wasAboveOrEqual && isBelow && c.k >= 50) {
+                    kdCross = '死亡交叉';
                     break;
                 }
             }
-
-            if (recentSignal !== '無') {
-                kdCross = recentSignal;
-            } else if (prev && Number.isFinite(last.k) && Number.isFinite(last.d)) {
-                if (last.k > last.d + EPS) kdCross = '黃金交叉';
-                else if (last.k < last.d - EPS) kdCross = '死亡交叉';
-                else kdCross = '無';
-            }
-
-            remark = 'KD狀態採最近交叉 + 目前K/D位置判斷';
         } else {
             kdCross = '—';
         }

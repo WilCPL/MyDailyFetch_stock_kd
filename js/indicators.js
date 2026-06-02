@@ -3,13 +3,14 @@
 // ============================================================
 
 // KD 計算函數 (9日)
+// 初始化以第一根有效 RSV 作為 K/D 起點，避免從 50 暖機造成假交叉
 export function calculateKD(highs, lows, closes, period = 9) {
-    let k = 50, d = 50;
+    let k = null, d = null;
     let result = [];
 
     for (let i = 0; i < closes.length; i++) {
         if (i < period - 1 || closes[i] === null) {
-            result.push({ k: 50, d: 50 });
+            result.push({ k: NaN, d: NaN });
             continue;
         }
 
@@ -17,7 +18,7 @@ export function calculateKD(highs, lows, closes, period = 9) {
         let currentLows = lows.slice(i - period + 1, i + 1).filter(v => v !== null);
 
         if (currentHighs.length === 0 || currentLows.length === 0) {
-            result.push({ k: k, d: d });
+            result.push({ k: k ?? NaN, d: d ?? NaN });
             continue;
         }
 
@@ -25,11 +26,19 @@ export function calculateKD(highs, lows, closes, period = 9) {
         let ll = Math.min(...currentLows);
         let close = closes[i];
 
-        let rsv = (hh === ll) ? k : ((close - ll) / (hh - ll)) * 100;
-        k = (2 / 3) * k + (1 / 3) * rsv;
-        d = (2 / 3) * d + (1 / 3) * k;
+        // hh === ll 時（平盤無波動）RSV 定為 50，不沿用 k 值
+        let rsv = (hh === ll) ? 50 : ((close - ll) / (hh - ll)) * 100;
 
-        result.push({ k: k, d: d });
+        if (k === null) {
+            // 以第一根真實 RSV 初始化，不從任意的 50 起算
+            k = rsv;
+            d = rsv;
+        } else {
+            k = (2 / 3) * k + (1 / 3) * rsv;
+            d = (2 / 3) * d + (1 / 3) * k;
+        }
+
+        result.push({ k, d });
     }
     return result;
 }
