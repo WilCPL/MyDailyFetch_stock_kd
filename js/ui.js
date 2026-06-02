@@ -62,7 +62,13 @@ export function renderRow(row) {
            </div>`
         : `<span style="color:var(--text-dim);">—</span>`;
 
-    const updateTime = row.updateTime || '';
+    const sourceTime = row.updateTime || '';
+    const fetchedAt = row.fetchedAt || '';
+    const showFetchedLine = fetchedAt && fetchedAt !== sourceTime;
+    const updateCell = `<div class="update-wrap">
+            <span class="ts update-source" title="資料來源時間">源 ${escapeHtml(sourceTime)}</span>
+            <span class="ts update-fetch" style="display:${showFetchedLine ? 'inline' : 'none'};" title="本次抓取時間">抓 ${escapeHtml(fetchedAt)}</span>
+        </div>`;
 
     tr.innerHTML = `
         <td><a href="${getYahooLink(row.symbol)}" target="_blank" rel="noopener" class="stock-link">${escapeHtml(row.name)}</a></td>
@@ -72,7 +78,7 @@ export function renderRow(row) {
         <td>${kdBadge(row.kdCross)}</td>
         <td>${locationBadge(row.location)}</td>
         <td>${adviceHtml(row.advice, row.status)}</td>
-        <td><span class="ts">${escapeHtml(updateTime)}</span></td>
+        <td>${updateCell}</td>
     `;
     return tr;
 }

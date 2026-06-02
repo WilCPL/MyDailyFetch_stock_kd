@@ -4,8 +4,103 @@
 import { CATEGORY_DOT, deriveStep, deriveApiSymbol } from './config.js';
 import { targets, setTargets, saveTargets } from './state.js';
 import { escapeHtml, escapeAttr } from './ui.js';
+import { fetchYahooData } from './api.js';
 
 let editingSymbol = null;
+let symbolLookupTimer = null;
+let symbolLookupSeq = 0;
+let symbolLookupBound = false;
+
+function buildLookupCandidates(symbol) {
+    if (!symbol) return [];
+    if (symbol.startsWith('^')) return [symbol];
+    if (symbol.includes('.')) return [symbol];
+    return [`${symbol}.TW`, `${symbol}.TWO`, symbol];
+}
+
+// 回傳第一個成功回應的 { name, apiSymbol }；全部失敗時回傳 { name: '', apiSymbol: null }
+async function lookupSymbol(symbol) {
+    const candidates = buildLookupCandidates(symbol);
+    for (const candidate of candidates) {
+        try {
+            const parsed = await fetchYahooData(candidate, { forceFresh: false });
+            const result = parsed?.chart?.result?.[0];
+            const meta = result?.meta || {};
+            const name = meta.longName || meta.shortName || '';
+            if (name) return { name, apiSymbol: candidate };
+        } catch (_) {
+            // 忽略單一候選失敗，繼續嘗試下一個
+        }
+    }
+    return { name: '', apiSymbol: null };
+}
+
+async function resolveApiSymbol(symbol) {
+    const { apiSymbol } = await lookupSymbol(symbol);
+    return apiSymbol || deriveApiSymbol(symbol);
+}
+
+async function runAutoFillName(symbol) {
+    const symbolInput = document.getElementById('inputSymbol');
+    const nameInput = document.getElementById('inputName');
+    const errEl = document.getElementById('formError');
+    if (!symbolInput || !nameInput || !errEl) return;
+    if (!symbol) return;
+
+    const currentSeq = ++symbolLookupSeq;
+    const shouldOverwrite = !nameInput.value.trim() || nameInput.dataset.autofilled === '1';
+    if (!shouldOverwrite) return;
+
+    const { name: foundName } = await lookupSymbol(symbol);
+    if (currentSeq !== symbolLookupSeq) return;
+
+    const latestSymbol = symbolInput.value.trim().toUpperCase();
+    if (latestSymbol !== symbol) return;
+
+    if (foundName) {
+        nameInput.value = foundName;
+        nameInput.dataset.autofilled = '1';
+        if (errEl.dataset.lookupMsg === '1') {
+            errEl.style.display = 'none';
+            errEl.dataset.lookupMsg = '0';
+        }
+    }
+}
+
+function queueAutoFillName() {
+    const symbolInput = document.getElementById('inputSymbol');
+    if (!symbolInput) return;
+
+    const normalized = symbolInput.value.trim().toUpperCase();
+    symbolInput.value = normalized;
+
+    if (symbolLookupTimer) clearTimeout(symbolLookupTimer);
+    if (!normalized) return;
+    symbolLookupTimer = setTimeout(() => {
+        runAutoFillName(normalized);
+    }, 450);
+}
+
+function bindAutoFillEvents() {
+    if (symbolLookupBound) return;
+    const symbolInput = document.getElementById('inputSymbol');
+    const nameInput = document.getElementById('inputName');
+    if (!symbolInput || !nameInput) return;
+
+    symbolInput.addEventListener('input', queueAutoFillName);
+    symbolInput.addEventListener('blur', () => {
+        if (symbolLookupTimer) clearTimeout(symbolLookupTimer);
+        const normalized = symbolInput.value.trim().toUpperCase();
+        symbolInput.value = normalized;
+        runAutoFillName(normalized);
+    });
+
+    nameInput.addEventListener('input', () => {
+        nameInput.dataset.autofilled = '0';
+    });
+
+    symbolLookupBound = true;
+}
 
 // 通知 main.js 重新載入資料（避免循環依賴）
 function requestReload() {
@@ -13,6 +108,7 @@ function requestReload() {
 }
 
 export function openSettings() {
+    bindAutoFillEvents();
     document.getElementById('settingsModal').style.display = 'flex';
     renderSettingsList();
 }
@@ -50,7 +146,9 @@ export function editTarget(symbol) {
     if (!target) return;
     editingSymbol = symbol;
     document.getElementById('inputSymbol').value = target.symbol;
-    document.getElementById('inputName').value = target.name;
+    const nameInput = document.getElementById('inputName');
+    nameInput.value = target.name;
+    nameInput.dataset.autofilled = '0';
     document.getElementById('inputCategory').value = target.category;
     document.getElementById('formTitle').textContent = `✏ 編輯：${target.name}`;
     document.getElementById('submitBtn').textContent = '更新';
@@ -61,8 +159,11 @@ export function editTarget(symbol) {
 
 export function cancelEdit() {
     editingSymbol = null;
+    symbolLookupSeq++;
+    if (symbolLookupTimer) clearTimeout(symbolLookupTimer);
     document.getElementById('inputSymbol').value = '';
     document.getElementById('inputName').value = '';
+    document.getElementById('inputName').dataset.autofilled = '0';
     document.getElementById('inputCategory').value = '台灣市值型 ETF';
     document.getElementById('formTitle').textContent = '新增標的';
     document.getElementById('submitBtn').textContent = '新增';
@@ -75,11 +176,12 @@ export function deleteTarget(symbol) {
     renderSettingsList();
 }
 
-export function submitTargetForm() {
+export async function submitTargetForm() {
     const symbol   = document.getElementById('inputSymbol').value.trim().toUpperCase();
     const name     = document.getElementById('inputName').value.trim();
     const category = document.getElementById('inputCategory').value;
     const errEl    = document.getElementById('formError');
+    const submitBtn = document.getElementById('submitBtn');
 
     if (!symbol || !name) {
         errEl.textContent = '請填寫代號與名稱';
@@ -94,11 +196,19 @@ export function submitTargetForm() {
         return;
     }
 
+    // 解析正確的 apiSymbol（同時試 .TW / .TWO，避免債券 ETF 用錯後綴）
+    const prevBtnText = submitBtn.textContent;
+    submitBtn.disabled = true;
+    submitBtn.textContent = '驗證中…';
+    const resolvedApiSymbol = await resolveApiSymbol(symbol);
+    submitBtn.disabled = false;
+    submitBtn.textContent = prevBtnText;
+
     const newTarget = {
         category,
         name,
         symbol,
-        apiSymbol: deriveApiSymbol(symbol),
+        apiSymbol: resolvedApiSymbol,
         step: deriveStep(category),
     };
 

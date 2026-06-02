@@ -7,9 +7,24 @@ import { calculateKD, analyzeData } from './indicators.js';
 // 記憶當前穩定運作的代理伺服器索引
 let currentProxyIndex = 0;
 
-export async function fetchYahooData(symbol) {
-    // 改用「5分鐘級別」的快取鍵，讓免費代理伺服器可利用快取回應
-    const cacheKey = Math.floor(new Date().getTime() / 300000);
+// 一般載入允許短秒級快取，手動刷新可強制繞過
+const CACHE_WINDOW_MS = 60000;
+
+function buildCacheKey(forceFresh = false) {
+    if (forceFresh) return Date.now();
+    return Math.floor(Date.now() / CACHE_WINDOW_MS);
+}
+
+function formatLocalDate(date) {
+    const pad = n => String(n).padStart(2, '0');
+    return `${date.getMonth() + 1}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+export async function fetchYahooData(symbol, options = {}) {
+    const { forceFresh = false } = options;
+
+    // 一般情況採短秒級快取；強制刷新時改為毫秒鍵，盡量取最新
+    const cacheKey = buildCacheKey(forceFresh);
 
     const endpoints = [
         `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&range=3mo&_=${cacheKey}`,
@@ -92,14 +107,28 @@ export async function fetchYahooData(symbol) {
     throw lastError || new Error('All endpoints and proxies failed');
 }
 
-export async function fetchStockData(item) {
+export async function fetchStockData(item, options = {}) {
+    const { forceFresh = false } = options;
+    const fetchedAt = formatLocalDate(new Date());
+
     try {
         let parsed;
         try {
-            parsed = await fetchYahooData(item.apiSymbol);
+            parsed = await fetchYahooData(item.apiSymbol, { forceFresh });
         } catch (error) {
-            if (error.message === 'NOT_FOUND' && item.apiSymbol.includes('.TWO')) {
-                parsed = await fetchYahooData(`${item.symbol}.TW`);
+            if (error.message === 'NOT_FOUND') {
+                // 嘗試另一個交易所後綴（.TW ↔ .TWO 互換）
+                let fallbackSymbol = null;
+                if (item.apiSymbol.endsWith('.TW')) {
+                    fallbackSymbol = `${item.symbol}.TWO`;
+                } else if (item.apiSymbol.includes('.TWO')) {
+                    fallbackSymbol = `${item.symbol}.TW`;
+                }
+                if (fallbackSymbol) {
+                    parsed = await fetchYahooData(fallbackSymbol, { forceFresh });
+                } else {
+                    throw error;
+                }
             } else {
                 throw error;
             }
@@ -124,29 +153,56 @@ export async function fetchStockData(item) {
         let remark = '';
 
         if (item.step !== 1) {
-            // 近似判斷法邏輯
-            if (prev) {
-                const kUp = last.k > prev.k;
-                const kDown = last.k < prev.k;
-                const dDownOrFlat = last.d <= prev.d;
-                const dUpOrFlat = last.d >= prev.d;
+            // KD 狀態判斷：
+            // 1) 優先看最近幾根是否發生交叉
+            // 2) 若沒有新交叉，退回目前 K/D 相對位置，避免長期顯示「無」
+            const EPS = 1e-6;
+            const lookbackBars = 5;
+            const startIdx = Math.max(1, kdData.length - lookbackBars);
 
-                if (last.k > last.d && kUp && dDownOrFlat) {
-                    kdCross = '黃金交叉';
-                } else if (last.k < last.d && kDown && dUpOrFlat) {
-                    kdCross = '死亡交叉';
+            let recentSignal = '無';
+            for (let i = kdData.length - 1; i >= startIdx; i--) {
+                const p = kdData[i - 1];
+                const c = kdData[i];
+                if (!p || !c) continue;
+                if (!Number.isFinite(p.k) || !Number.isFinite(p.d) || !Number.isFinite(c.k) || !Number.isFinite(c.d)) continue;
+
+                const wasBelowOrEqual = p.k <= p.d + EPS;
+                const wasAboveOrEqual = p.k >= p.d - EPS;
+                const isAbove = c.k > c.d + EPS;
+                const isBelow = c.k < c.d - EPS;
+
+                if (wasBelowOrEqual && isAbove) {
+                    recentSignal = '黃金交叉';
+                    break;
+                }
+                if (wasAboveOrEqual && isBelow) {
+                    recentSignal = '死亡交叉';
+                    break;
                 }
             }
-            remark = 'KD狀態採近似判斷';
+
+            if (recentSignal !== '無') {
+                kdCross = recentSignal;
+            } else if (prev && Number.isFinite(last.k) && Number.isFinite(last.d)) {
+                if (last.k > last.d + EPS) kdCross = '黃金交叉';
+                else if (last.k < last.d - EPS) kdCross = '死亡交叉';
+                else kdCross = '無';
+            }
+
+            remark = 'KD狀態採最近交叉 + 目前K/D位置判斷';
         } else {
             kdCross = '—';
         }
 
         const analysis = analyzeData(item.step, kVal, kdCross);
 
-        const now = new Date();
-        const _pad = n => String(n).padStart(2, '0');
-        const updateTime = `${now.getMonth() + 1}/${_pad(now.getDate())} ${_pad(now.getHours())}:${_pad(now.getMinutes())}`;
+        const sourceEpoch = Array.isArray(result.timestamp)
+            ? result.timestamp.filter(v => Number.isFinite(v)).at(-1)
+            : null;
+        const sourceTime = sourceEpoch
+            ? formatLocalDate(new Date(sourceEpoch * 1000))
+            : fetchedAt;
 
         return {
             ...item,
@@ -156,15 +212,12 @@ export async function fetchStockData(item) {
             location: analysis.location,
             advice: analysis.advice,
             remark,
-            updateTime,
+            updateTime: sourceTime,
+            fetchedAt,
             status: 'success',
         };
     } catch (error) {
         console.warn(`獲取 ${item.symbol} 失敗:`, error.message || error);
-
-        const now = new Date();
-        const _pad = n => String(n).padStart(2, '0');
-        const updateTime = `${now.getMonth() + 1}/${_pad(now.getDate())} ${_pad(now.getHours())}:${_pad(now.getMinutes())}`;
 
         return {
             ...item,
@@ -174,7 +227,8 @@ export async function fetchStockData(item) {
             location: 'N/A',
             advice: '請你自行查詢',
             remark: '網路或伺服器阻擋',
-            updateTime,
+            updateTime: fetchedAt,
+            fetchedAt,
             status: 'error',
         };
     }

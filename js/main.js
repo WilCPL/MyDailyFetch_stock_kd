@@ -11,7 +11,7 @@ import {
     saveSettings, exportTargets, importTargets,
 } from './settings.js';
 
-async function loadData() {
+async function loadData(forceFresh = false) {
     const tableBody  = document.getElementById('dataTable');
     const progWrap   = document.getElementById('loadingProgress');
     const progBar    = document.getElementById('progBar');
@@ -27,7 +27,7 @@ async function loadData() {
     // Show progress bar
     progWrap.style.display = 'block';
     progBar.style.width = '0%';
-    progLabel.textContent = '正在取得資料…';
+    progLabel.textContent = forceFresh ? '正在強制更新最新資料…' : '正在取得資料…';
     progPct.textContent = '0%';
 
     // Group targets by category (preserve order)
@@ -64,7 +64,7 @@ async function loadData() {
 
     // Fetch all in parallel; replace skeleton on completion
     const promises = targets.map(async (target) => {
-        const res = await fetchStockData(target);
+        const res = await fetchStockData(target, { forceFresh });
         loadedCount++;
 
         const pct = Math.round((loadedCount / totalCount) * 100);
@@ -92,9 +92,9 @@ async function loadData() {
 }
 
 // 監聽 settings.js 發出的重新載入事件（避免循環依賴）
-document.addEventListener('stock:reload', loadData);
+document.addEventListener('stock:reload', () => loadData(false));
 
-window.onload = loadData;
+window.onload = () => loadData(true);
 
 // ── 全域函式綁定（供 HTML onclick 使用）──────────────────────
 window.loadData          = loadData;

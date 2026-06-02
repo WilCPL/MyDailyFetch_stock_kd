@@ -200,6 +200,9 @@ body {
 
 /* ── Timestamp ── */
 .ts { font-family: 'IBM Plex Mono', monospace; font-size: 10.5px; color: var(--text-dim); }
+.update-wrap { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; line-height: 1.1; }
+.update-source { color: var(--text-dim); }
+.update-fetch { color: var(--text-secondary); opacity: 0.9; }
 
 /* ── Spinner ── */
 @keyframes _spin { to { transform: rotate(360deg); } }
