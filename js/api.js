@@ -38,7 +38,7 @@ export async function fetchYahooData(symbol, options = {}) {
             // 優先使用上次成功運作的代理器 (Sticky Proxy 機制)
             let proxyIndex = (currentProxyIndex + attempt) % PROXY_GENERATORS.length;
             let proxy = PROXY_GENERATORS[proxyIndex];
-            let proxyUrl = proxy.build(endpoint);
+            let proxyUrl = proxy.build(endpoint, cacheKey);
 
             try {
                 const controller = new AbortController();
@@ -136,19 +136,34 @@ export async function fetchStockData(item, options = {}) {
 
         const result = parsed.chart.result[0];
         const quotes = result.indicators.quote[0];
+        const meta = result.meta || {};
 
-        // 取得最新股價
+        // ── 即時股價：優先使用 meta.regularMarketPrice（盤中即時更新）
+        // quotes.close 的最後一筆在盤中仍是昨日收盤，只有盤後才更新
+        const metaPrice = (typeof meta.regularMarketPrice === 'number') ? meta.regularMarketPrice : null;
         const validCloses = quotes.close.filter(v => v !== null);
-        const currentPrice = validCloses.length > 0 ? validCloses[validCloses.length - 1] : 'N/A';
+        const fallbackPrice = validCloses.length > 0 ? validCloses[validCloses.length - 1] : null;
+        const currentPrice = metaPrice ?? fallbackPrice ?? 'N/A';
         const formattedPrice = currentPrice !== 'N/A'
             ? currentPrice.toLocaleString('en-US', { maximumFractionDigits: 2 })
             : 'N/A';
 
-        const kdData = calculateKD(quotes.high, quotes.low, quotes.close);
-        const last = kdData[kdData.length - 1];
-        const prev = kdData[kdData.length - 2];
+        // ── 盤中補丁：將最後一根 K 棒的 high/low/close 更新為今日盤中即時數據
+        // 這樣 KD 計算才會反映今日的成交價，而非只用昨日收盤
+        const highs  = [...quotes.high];
+        const lows   = [...quotes.low];
+        const closes = [...quotes.close];
+        if (metaPrice !== null) {
+            const lastIdx = closes.length - 1;
+            // 以今日盤中 high/low/close 覆蓋（meta 欄位在盤中會即時更新）
+            if (typeof meta.regularMarketDayHigh === 'number') highs[lastIdx]  = meta.regularMarketDayHigh;
+            if (typeof meta.regularMarketDayLow  === 'number') lows[lastIdx]   = meta.regularMarketDayLow;
+            closes[lastIdx] = metaPrice;
+        }
 
-        // 找最後一個有效的 K 値（防範未交易日派發 NaN 的情況）
+        const kdData = calculateKD(highs, lows, closes);
+
+        // 找最後一個有效的 K 值（防範未交易日派發 NaN 的情況）
         let kVal = NaN;
         for (let i = kdData.length - 1; i >= 0; i--) {
             if (Number.isFinite(kdData[i].k)) { kVal = kdData[i].k; break; }
@@ -192,9 +207,13 @@ export async function fetchStockData(item, options = {}) {
 
         const analysis = analyzeData(item.step, kVal, kdCross);
 
-        const sourceEpoch = Array.isArray(result.timestamp)
-            ? result.timestamp.filter(v => Number.isFinite(v)).at(-1)
-            : null;
+        // ── 更新時間：優先使用 meta.regularMarketTime（即時交易時間），
+        // result.timestamp 最後一筆只是今日日 K 棒的開盤時間，精確度不足
+        const sourceEpoch = (typeof meta.regularMarketTime === 'number')
+            ? meta.regularMarketTime
+            : Array.isArray(result.timestamp)
+                ? result.timestamp.filter(v => Number.isFinite(v)).at(-1)
+                : null;
         const sourceTime = sourceEpoch
             ? formatLocalDate(new Date(sourceEpoch * 1000))
             : fetchedAt;
