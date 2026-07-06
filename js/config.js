@@ -35,10 +35,10 @@ export const CATEGORY_DOT = {
 
 // 代理伺服器清單（依可靠度排序；sticky proxy 機制會記住上次成功的）
 export const PROXY_GENERATORS = [
-    { id: 'corsproxy_io',   build: (url) => `https://corsproxy.io/?${encodeURIComponent(url)}` },
-    { id: 'allorigins_raw', build: (url) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}` },
-    { id: 'allorigins_get', build: (url) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}` },
-    { id: 'codetabs',       build: (url) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}` },
+    { id: 'corsproxy_io',   build: (url, cb) => `https://corsproxy.io/?url=${encodeURIComponent(url)}&cacheBust=${cb}` },
+    { id: 'allorigins_raw', build: (url, cb) => `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}&cacheBust=${cb}` },
+    { id: 'allorigins_get', build: (url, cb) => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}&cacheBust=${cb}` },
+    { id: 'codetabs',       build: (url, cb) => `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(url)}&cacheBust=${cb}` },
 ];
 
 export function deriveStep(category) {

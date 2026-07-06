@@ -38,7 +38,7 @@ export async function fetchYahooData(symbol, options = {}) {
             // 優先使用上次成功運作的代理器 (Sticky Proxy 機制)
             let proxyIndex = (currentProxyIndex + attempt) % PROXY_GENERATORS.length;
             let proxy = PROXY_GENERATORS[proxyIndex];
-            let proxyUrl = proxy.build(endpoint);
+            let proxyUrl = proxy.build(endpoint, cacheKey);
 
             try {
                 const controller = new AbortController();
@@ -136,19 +136,42 @@ export async function fetchStockData(item, options = {}) {
 
         const result = parsed.chart.result[0];
         const quotes = result.indicators.quote[0];
+        const meta = result.meta || {};
 
-        // 取得最新股價
+        // ── 即時股價：優先使用 meta.regularMarketPrice（盤中即時更新）
+        // quotes.close 的最後一筆在盤中仍是昨日收盤，只有盤後才更新
+        const metaPrice = (typeof meta.regularMarketPrice === 'number') ? meta.regularMarketPrice : null;
         const validCloses = quotes.close.filter(v => v !== null);
-        const currentPrice = validCloses.length > 0 ? validCloses[validCloses.length - 1] : 'N/A';
+        const fallbackPrice = validCloses.length > 0 ? validCloses[validCloses.length - 1] : null;
+        const currentPrice = metaPrice ?? fallbackPrice ?? 'N/A';
         const formattedPrice = currentPrice !== 'N/A'
             ? currentPrice.toLocaleString('en-US', { maximumFractionDigits: 2 })
             : 'N/A';
 
-        const kdData = calculateKD(quotes.high, quotes.low, quotes.close);
-        const last = kdData[kdData.length - 1];
-        const prev = kdData[kdData.length - 2];
+        // ── 盤中補丁：將最後一根 K 棒的 high/low/close 更新為今日盤中即時數據
+        // 這樣 KD 計算才會反映今日的成交價，而非只用昨日收盤
+        const highs  = [...quotes.high];
+        const lows   = [...quotes.low];
+        const closes = [...quotes.close];
+        if (metaPrice !== null) {
+            const lastIdx = closes.length - 1;
+            // 以今日盤中 high/low/close 覆蓋（meta 欄位在盤中會即時更新）
+            if (typeof meta.regularMarketDayHigh === 'number') highs[lastIdx]  = meta.regularMarketDayHigh;
+            if (typeof meta.regularMarketDayLow  === 'number') lows[lastIdx]   = meta.regularMarketDayLow;
+            closes[lastIdx] = metaPrice;
+        }
 
-        // 找最後一個有效的 K 値（防範未交易日派發 NaN 的情況）
+        // ── KD 計算分兩組，各有不同用途 ──────────────────────────────
+        // [1] kdData（盤中版）：補入今日即時 high/low/close，用於顯示 K 值
+        //     → 使用者能看到今天 K 值走到哪，即時反映盤中走勢
+        const kdData = calculateKD(highs, lows, closes);
+
+        // [2] kdDataClosed（收盤版）：僅用原始 quotes（已確認的收盤資料），用於判斷 KD 交叉
+        //     → 交叉訊號以「昨日收盤」為基準，一整天穩定不跳動
+        //     → 符合日 KD 技術分析的正統定義（日 K 棒需到收盤才算確認）
+        const kdDataClosed = calculateKD(quotes.high, quotes.low, quotes.close);
+
+        // 找最後一個有效的 K 值（盤中版，讓使用者看到今日即時 K 位置）
         let kVal = NaN;
         for (let i = kdData.length - 1; i >= 0; i--) {
             if (Number.isFinite(kdData[i].k)) { kVal = kdData[i].k; break; }
@@ -157,33 +180,53 @@ export async function fetchStockData(item, options = {}) {
         let remark = '';
 
         if (item.step !== 1) {
-            // KD 狀態判斷：僅看最近 3 根是否發生有意義的交叉事件
-            // 條件：K 穿越 D，且穿越當下 K <= 50（黃金交叉）或 K >= 50（死亡交叉）
-            // 過濾高位/低位小幅震盪造成的假穿越訊號
+            // ── KD 交叉偵測：使用 kdDataClosed（收盤確認版）────────────────
+            // 優點：訊號在一整個交易日內保持穩定，不因盤中波動而忽現忽消
+            // 回溯 10 根 K 棒（約 2 週），讓訊號有足夠的有效期限
             const EPS = 1e-6;
-            const lookbackBars = 3;
-            const startIdx = Math.max(1, kdData.length - lookbackBars);
+            const lookbackBars = 10;
+            const startIdx = Math.max(1, kdDataClosed.length - lookbackBars);
 
-            for (let i = kdData.length - 1; i >= startIdx; i--) {
-                const p = kdData[i - 1];
-                const c = kdData[i];
+            for (let i = kdDataClosed.length - 1; i >= startIdx; i--) {
+                const p = kdDataClosed[i - 1];
+                const c = kdDataClosed[i];
                 if (!p || !c) continue;
                 if (!Number.isFinite(p.k) || !Number.isFinite(p.d) || !Number.isFinite(c.k) || !Number.isFinite(c.d)) continue;
 
-                const wasBelowOrEqual = p.k <= p.d + EPS;
-                const wasAboveOrEqual = p.k >= p.d - EPS;
-                const isAbove = c.k > c.d + EPS;
-                const isBelow = c.k < c.d - EPS;
+                const prevKBelowD = p.k < p.d + EPS;
+                const prevKAboveD = p.k > p.d - EPS;
+                const currKAboveD = c.k > c.d + EPS;
+                const currKBelowD = c.k < c.d - EPS;
 
-                // 黃金交叉：K 向上穿越 D，且穿越時 K 值 <= 50（排除高位震盪）
-                if (wasBelowOrEqual && isAbove && c.k <= 50) {
+                // 黃金交叉：K 由下往上穿越 D，且穿越時 K <= 50（排除高位震盪假訊號）
+                if (prevKBelowD && currKAboveD && c.k <= 50) {
                     kdCross = '黃金交叉';
                     break;
                 }
-                // 死亡交叉：K 向下穿越 D，且穿越時 K 值 >= 50（排除低位震盪）
-                if (wasAboveOrEqual && isBelow && c.k >= 50) {
+                // 死亡交叉：K 由上往下穿越 D，且穿越時 K >= 50（排除低位震盪假訊號）
+                if (prevKAboveD && currKBelowD && c.k >= 50) {
                     kdCross = '死亡交叉';
                     break;
+                }
+            }
+
+            // ── 現況一致性驗證 ──────────────────────────────────────────
+            // 過去 10 根內找到的交叉，必須和「目前的 K/D 關係」一致才有效。
+            // 情境：死亡交叉發生後，K 強力反彈重新穿越 D 上方 →
+            //       因為反彈時 K > 50 被高位過濾擋掉，黃金交叉未被記錄，
+            //       但死亡交叉訊號已實質失效，不應繼續顯示。
+            if (kdCross !== '無') {
+                let latestClosed = null;
+                for (let i = kdDataClosed.length - 1; i >= 0; i--) {
+                    if (Number.isFinite(kdDataClosed[i].k)) { latestClosed = kdDataClosed[i]; break; }
+                }
+                if (latestClosed) {
+                    const kNowAboveD = latestClosed.k > latestClosed.d + EPS;
+                    const kNowBelowD = latestClosed.k < latestClosed.d - EPS;
+                    // 死亡交叉但 K 已反向回到 D 上方 → 訊號失效
+                    if (kdCross === '死亡交叉' && kNowAboveD) kdCross = '無';
+                    // 黃金交叉但 K 已反向跌回 D 下方 → 訊號失效
+                    if (kdCross === '黃金交叉' && kNowBelowD) kdCross = '無';
                 }
             }
         } else {
@@ -192,9 +235,13 @@ export async function fetchStockData(item, options = {}) {
 
         const analysis = analyzeData(item.step, kVal, kdCross);
 
-        const sourceEpoch = Array.isArray(result.timestamp)
-            ? result.timestamp.filter(v => Number.isFinite(v)).at(-1)
-            : null;
+        // ── 更新時間：優先使用 meta.regularMarketTime（即時交易時間），
+        // result.timestamp 最後一筆只是今日日 K 棒的開盤時間，精確度不足
+        const sourceEpoch = (typeof meta.regularMarketTime === 'number')
+            ? meta.regularMarketTime
+            : Array.isArray(result.timestamp)
+                ? result.timestamp.filter(v => Number.isFinite(v)).at(-1)
+                : null;
         const sourceTime = sourceEpoch
             ? formatLocalDate(new Date(sourceEpoch * 1000))
             : fetchedAt;

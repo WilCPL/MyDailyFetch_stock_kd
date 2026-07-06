@@ -15,8 +15,9 @@ export function escapeAttr(str) {
     return String(str).replace(/"/g, '&quot;');
 }
 
-export function getYahooLink(symbol) {
-    const encodeSym = symbol === '^TWII' ? '%5ETWII' : symbol;
+export function getYahooLink(apiSymbol) {
+    // apiSymbol 已帶交易所後綴，如 2317.TW、00719B.TWO、^TWII
+    const encodeSym = encodeURIComponent(apiSymbol);
     return `https://tw.stock.yahoo.com/quote/${encodeSym}/technical-analysis`;
 }
 
@@ -76,7 +77,7 @@ export function renderRow(row) {
         </div>`;
 
     tr.innerHTML = `
-        <td><a href="${getYahooLink(row.symbol)}" target="_blank" rel="noopener" class="stock-link">${escapeHtml(row.name)}</a></td>
+        <td><a href="${getYahooLink(row.apiSymbol)}" target="_blank" rel="noopener" class="stock-link">${escapeHtml(row.name)}</a></td>
         <td><span class="code-tag">${escapeHtml(row.symbol)}</span></td>
         <td><span class="price-val" style="color:${row.status === 'error' ? 'var(--text-dim)' : 'var(--text-primary)'};">${escapeHtml(row.price)}</span></td>
         <td>${kCellHtml}</td>

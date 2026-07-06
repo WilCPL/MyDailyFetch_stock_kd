@@ -92,7 +92,7 @@ async function loadData(forceFresh = false) {
 }
 
 // 監聽 settings.js 發出的重新載入事件（避免循環依賴）
-document.addEventListener('stock:reload', () => loadData(false));
+document.addEventListener('stock:reload', () => loadData(true));
 
 window.onload = () => loadData(true);
 
