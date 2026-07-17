@@ -582,6 +582,256 @@ body {
     .set-item-name { font-size: 12.5px; }
 }
 
+/* ══ Memo Feature ══ */
+
+/* Advice cell — flexbox wrapper for advice text + memo button */
+.advice-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Memo icon button (matches .btn-star pattern) */
+.btn-memo {
+    background: transparent;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.15);
+    transition: color 0.2s, transform 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.btn-memo:hover {
+    color: rgba(255, 255, 255, 0.5);
+    transform: scale(1.1);
+}
+.btn-memo.memo-has-content {
+    color: var(--accent-blue);
+}
+
+/* ══ Memo Feature (Drawer style) ══ */
+
+/* Advice cell — flexbox wrapper for advice text + memo button */
+.advice-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Memo icon button */
+.btn-memo {
+    background: transparent;
+    border: none;
+    padding: 2px;
+    cursor: pointer;
+    color: rgba(255, 255, 255, 0.15);
+    transition: color 0.2s, transform 0.2s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+.btn-memo:hover {
+    color: rgba(255, 255, 255, 0.5);
+    transform: scale(1.1);
+}
+.btn-memo.memo-has-content {
+    color: var(--accent-blue);
+}
+
+/* Drawer Shell */
+.memo-drawer {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    justify-content: flex-end;
+    pointer-events: none;
+    overflow: hidden;
+}
+.memo-drawer.drawer-active {
+    pointer-events: auto;
+}
+
+/* Backdrop */
+.memo-drawer-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    z-index: 1;
+}
+.memo-drawer.drawer-active .memo-drawer-backdrop {
+    opacity: 1;
+}
+
+/* Content Container */
+.memo-drawer-content {
+    position: relative;
+    z-index: 2;
+    width: 100%;
+    max-width: 440px;
+    height: 100%;
+    background: var(--bg-surface);
+    border-left: 1px solid var(--border);
+    box-shadow: -10px 0 40px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    transform: translateX(100%);
+    transition: transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+.memo-drawer.drawer-active .memo-drawer-content {
+    transform: translateX(0);
+}
+
+/* Header */
+.memo-drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.memo-drawer-title-wrap {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+.memo-drawer-stock-name {
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+.memo-drawer-stock-symbol {
+    font-size: 11px;
+}
+.memo-drawer-close {
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 6px;
+    cursor: pointer;
+    color: var(--text-secondary);
+    font-size: 16px;
+    border: 1px solid transparent;
+    background: transparent;
+    transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+}
+.memo-drawer-close:hover {
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border-color: var(--border);
+}
+
+/* Body */
+.memo-drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    overscroll-behavior: contain;
+}
+.memo-drawer-meta {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.memo-title {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-secondary);
+}
+.memo-timestamp {
+    font-size: 11.5px;
+    color: var(--text-dim);
+    font-family: 'IBM Plex Mono', monospace;
+}
+
+/* Textarea */
+.memo-textarea {
+    width: 100%;
+    flex: 1;
+    min-height: 200px;
+    resize: none;
+    padding: 14px 16px;
+    font-size: 13.5px;
+    font-family: 'Noto Sans TC', -apple-system, sans-serif;
+    line-height: 1.65;
+    color: var(--text-primary);
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    outline: none;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.memo-textarea::placeholder {
+    color: var(--text-dim);
+}
+.memo-textarea:focus {
+    border-color: var(--accent-blue);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.12);
+}
+
+/* Actions */
+.memo-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.memo-save-btn {
+    padding: 8px 24px;
+    font-size: 13px;
+}
+.memo-save-status {
+    font-size: 12.5px;
+    color: var(--accent-green);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+}
+.memo-save-status.memo-status-show {
+    opacity: 1;
+}
+
+/* Prevent body scrolling when drawer is open */
+body.drawer-open {
+    overflow: hidden;
+}
+
+/* ── Mobile adjustments ── */
+@media (max-width: 720px) {
+    .memo-drawer-content {
+        max-width: 100%;
+        border-left: none;
+    }
+    .memo-drawer-header {
+        padding: 16px 20px;
+    }
+    .memo-drawer-body {
+        padding: 20px;
+    }
+    .memo-textarea {
+        font-size: 14.5px;
+    }
+    .advice-cell {
+        gap: 6px;
+    }
+}
+
 /* ── Reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
     .spinner  { animation: none; opacity: 0.6; }
@@ -589,4 +839,8 @@ body {
     .row-in   { animation: none; opacity: 1; transform: none; }
     .k-fill   { transition: none; }
     .prog-fill { transition: none; }
+    .memo-drawer-backdrop { transition: none; }
+    .memo-drawer-content { transition: none; }
+    .memo-save-status { transition: none; }
 }
+

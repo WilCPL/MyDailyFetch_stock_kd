@@ -5,6 +5,7 @@ import { CATEGORY_DOT, deriveStep, deriveApiSymbol } from './config.js';
 import { targets, setTargets, saveTargets } from './state.js';
 import { escapeHtml, escapeAttr } from './ui.js';
 import { fetchYahooData } from './api.js';
+import { getAllMemos, importMemos } from './memo.js';
 
 let editingSymbol = null;
 let symbolLookupTimer = null;
@@ -231,7 +232,11 @@ export function saveSettings() {
 }
 
 export function exportTargets() {
-    const json = JSON.stringify(targets, null, 2);
+    const exportData = {
+        targets: targets,
+        memos: getAllMemos(),
+    };
+    const json = JSON.stringify(exportData, null, 2);
     const blob = new Blob([json], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -249,8 +254,23 @@ export function importTargets(event) {
     const reader = new FileReader();
     reader.onload = function (e) {
         try {
-            const data = JSON.parse(e.target.result);
-            if (!Array.isArray(data) || data.length === 0) throw new Error('格式不正確，需為非空陣列');
+            const raw = JSON.parse(e.target.result);
+
+            // 相容新格式 { targets: [...], memos: {...} } 與舊格式 […]
+            let data;
+            let importedMemos = null;
+            if (Array.isArray(raw)) {
+                // 舊格式：純陣列
+                data = raw;
+            } else if (raw && Array.isArray(raw.targets)) {
+                // 新格式
+                data = raw.targets;
+                importedMemos = raw.memos || null;
+            } else {
+                throw new Error('格式不正確，需為陣列或包含 targets 欄位的物件');
+            }
+
+            if (data.length === 0) throw new Error('標的清單為空');
             for (const item of data) {
                 if (!item.symbol || !item.name || !item.category) throw new Error('缺少必要欄位（symbol、name、category）');
                 // 相容舊版匯出（補齊自動推導欄位）
@@ -259,8 +279,16 @@ export function importTargets(event) {
             }
             setTargets(data);
             saveTargets();
+
+            // 匯入筆記（合併模式，不會清除未在匯入檔中的筆記）
+            if (importedMemos) {
+                importMemos(importedMemos, 'merge');
+            }
+
             renderSettingsList();
-            alert(`✅ 匯入成功，共載入 ${data.length} 筆標的`);
+            const memoCount = importedMemos ? Object.keys(importedMemos).length : 0;
+            const memoMsg = memoCount > 0 ? `，含 ${memoCount} 筆筆記` : '';
+            alert(`✅ 匯入成功，共載入 ${data.length} 筆標的${memoMsg}`);
             requestReload();
         } catch (err) {
             alert(`❌ 匯入失敗：${err.message}`);

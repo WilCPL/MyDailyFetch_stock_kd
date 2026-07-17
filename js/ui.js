@@ -1,6 +1,7 @@
 // ============================================================
 // ui.js — 渲染層（badge 產生、table row 等）
 // ============================================================
+import { getMemo, hasMemo, saveMemo } from './memo.js';
 
 export function escapeHtml(str) {
     return String(str)
@@ -96,7 +97,16 @@ export function renderRow(row) {
         <td>${kCellHtml}</td>
         <td>${kdBadge(row.kdCross)}</td>
         <td>${locationBadge(row.location)}</td>
-        <td>${adviceHtml(row.advice, row.status)}</td>
+        <td>
+            <div class="advice-cell">
+                ${adviceHtml(row.advice, row.status)}
+                <button class="btn-memo ${hasMemo(row.symbol) ? 'memo-has-content' : ''}" onclick="toggleMemoPanel('${row.symbol}')" aria-label="筆記" title="筆記">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="${hasMemo(row.symbol) ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                    </svg>
+                </button>
+            </div>
+        </td>
         <td>${updateCell}</td>
     `;
     return tr;
@@ -116,4 +126,181 @@ export function renderSkeletonRow() {
         <td><span class="skel" style="width:72px;height:11px;"></span></td>
     `;
     return tr;
+}
+
+// ── Memo Drawer ──────────────────────────────────────────────
+
+let currentDrawerSymbol = null;
+let originalMemoText    = '';
+
+function getOrCreateDrawer() {
+    let drawer = document.getElementById('memoDrawer');
+    if (!drawer) {
+        drawer = document.createElement('div');
+        drawer.id = 'memoDrawer';
+        drawer.className = 'memo-drawer';
+        drawer.innerHTML = `
+            <div class="memo-drawer-backdrop" onclick="closeMemoDrawer()"></div>
+            <div class="memo-drawer-content">
+                <div class="memo-drawer-header">
+                    <div class="memo-drawer-title-wrap">
+                        <span id="memoDrawerStockName" class="memo-drawer-stock-name"></span>
+                        <span id="memoDrawerStockSymbol" class="code-tag memo-drawer-stock-symbol"></span>
+                    </div>
+                    <button class="memo-drawer-close" onclick="closeMemoDrawer()" aria-label="關閉">✕</button>
+                </div>
+                <div class="memo-drawer-body">
+                    <div class="memo-drawer-meta">
+                        <span class="memo-title">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                            </svg>
+                            投資筆記
+                        </span>
+                        <span id="memoDrawerTimestamp" class="memo-timestamp"></span>
+                    </div>
+                    <textarea id="memoDrawerTextarea" class="memo-textarea" placeholder="在這裡寫下研究筆記、目標價位、操作策略…" rows="12"></textarea>
+                    <div class="memo-actions">
+                        <button id="memoDrawerSaveBtn" class="btn btn-primary memo-save-btn">儲存筆記</button>
+                        <span id="memoDrawerStatus" class="memo-save-status"></span>
+                    </div>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(drawer);
+    }
+    return drawer;
+}
+
+export function toggleMemoPanel(symbol) {
+    if (currentDrawerSymbol === symbol) {
+        closeMemoDrawer();
+        return;
+    }
+
+    // 如果切換到別的股票，先確認當前打開的股票是否可正常關閉
+    if (currentDrawerSymbol !== null) {
+        const closed = closeMemoDrawer();
+        if (!closed) return; // 使用者取消關閉，不切換
+    }
+
+    openMemoDrawer(symbol);
+}
+
+export function openMemoDrawer(symbol) {
+    const drawer = getOrCreateDrawer();
+
+    // 從表格行中獲取股票名稱
+    const dataRow = document.getElementById(`row-${symbol}`);
+    let stockName = symbol;
+    if (dataRow) {
+        const link = dataRow.querySelector('.stock-link');
+        if (link) stockName = link.textContent.trim();
+    }
+
+    currentDrawerSymbol = symbol;
+
+    const nameEl   = document.getElementById('memoDrawerStockName');
+    const symbolEl = document.getElementById('memoDrawerStockSymbol');
+    const textarea = document.getElementById('memoDrawerTextarea');
+    const tsEl     = document.getElementById('memoDrawerTimestamp');
+    const saveBtn  = document.getElementById('memoDrawerSaveBtn');
+    const statusEl = document.getElementById('memoDrawerStatus');
+
+    if (nameEl)   nameEl.textContent   = stockName;
+    if (symbolEl) symbolEl.textContent = symbol;
+    if (statusEl) statusEl.textContent = '';
+
+    const memo     = getMemo(symbol);
+    const memoText = memo ? memo.text : '';
+    if (textarea) textarea.value = memoText;
+    originalMemoText = memoText; // 紀錄原始文字，用於偵測未儲存變更
+
+    // 更新最後儲存時間
+    const pad = n => String(n).padStart(2, '0');
+    if (tsEl) {
+        if (memo && memo.updatedAt) {
+            const d = new Date(memo.updatedAt);
+            tsEl.textContent = `最後儲存：${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+        } else {
+            tsEl.textContent = '';
+        }
+    }
+
+    // 綁定儲存按鈕
+    if (saveBtn) {
+        saveBtn.onclick = () => saveMemoFromDrawer(symbol);
+    }
+
+    // 顯示 drawer
+    drawer.classList.add('drawer-active');
+    document.body.classList.add('drawer-open');
+
+    // 自動聚焦並移動游標至末尾
+    if (textarea) {
+        textarea.focus();
+        textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }
+}
+
+export function closeMemoDrawer() {
+    const textarea = document.getElementById('memoDrawerTextarea');
+    if (textarea) {
+        const currentVal = textarea.value.trim();
+        // 如果有修改且未儲存，提示使用者
+        if (currentVal !== originalMemoText) {
+            const confirmClose = confirm('您有尚未儲存的筆記修改，確定要直接關閉嗎？');
+            if (!confirmClose) {
+                return false; // 使用者選擇取消，保持開啟
+            }
+        }
+    }
+
+    const drawer = document.getElementById('memoDrawer');
+    if (drawer) {
+        drawer.classList.remove('drawer-active');
+        document.body.classList.remove('drawer-open');
+    }
+    currentDrawerSymbol = null;
+    originalMemoText    = '';
+    return true; // 順利關閉
+}
+
+export function saveMemoFromDrawer(symbol) {
+    const textarea = document.getElementById('memoDrawerTextarea');
+    const statusEl = document.getElementById('memoDrawerStatus');
+    const tsEl     = document.getElementById('memoDrawerTimestamp');
+    if (!textarea) return;
+
+    const currentVal = textarea.value;
+    saveMemo(symbol, currentVal);
+    originalMemoText = currentVal.trim(); // 儲存後更新基準，避免誤觸提示
+
+    // 更新列表上的筆記按鈕高亮狀態
+    const dataRow = document.getElementById(`row-${symbol}`);
+    if (dataRow) {
+        const memoBtn = dataRow.querySelector('.btn-memo');
+        if (memoBtn) {
+            const has = hasMemo(symbol);
+            memoBtn.classList.toggle('memo-has-content', has);
+            const svg = memoBtn.querySelector('svg');
+            if (svg) svg.setAttribute('fill', has ? 'currentColor' : 'none');
+        }
+    }
+
+    // 更新抽屜內的時間戳
+    const pad   = n => String(n).padStart(2, '0');
+    const d     = new Date();
+    const stamp = `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (tsEl) tsEl.textContent = `最後儲存：${stamp}`;
+
+    // 成功提示
+    if (statusEl) {
+        statusEl.textContent = '✓ 已儲存';
+        statusEl.classList.add('memo-status-show');
+        setTimeout(() => {
+            statusEl.classList.remove('memo-status-show');
+            setTimeout(() => { statusEl.textContent = ''; }, 300);
+        }, 2000);
+    }
 }
